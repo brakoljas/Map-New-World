@@ -1,0 +1,1014 @@
+```html
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Known Places Map</title>
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    #wrap { position: relative; width: 100vw; height: 100vh; background: #111; overflow: hidden; }
+
+    /* Top-left UI */
+    #ui {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.55);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(6px);
+      color: #fff;
+      z-index: 10;
+    }
+    button {
+      background: rgba(255,255,255,0.10);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    button:hover { background: rgba(255,255,255,0.16); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Right panel */
+    #panel {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 340px;
+      max-height: calc(100vh - 24px);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 14px;
+      background: rgba(0,0,0,0.55);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(6px);
+      color: #fff;
+      z-index: 10;
+    }
+    #panelHeader { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    #panelTitle { font-size: 14px; font-weight: 650; opacity: 0.95; }
+    #countBadge { font-size: 12px; opacity: 0.8; white-space: nowrap; }
+
+    #controls { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    #search {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.06);
+      color: #fff;
+      outline: none;
+    }
+    #search::placeholder { color: rgba(255,255,255,0.55); }
+
+    #filters {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      align-items: center;
+      font-size: 12px;
+      opacity: 0.9;
+      user-select: none;
+    }
+    #typeFilter, #sortFilter {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 7px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.06);
+      color: #fff;
+      outline: none;
+    }
+    option { color: #000; }
+
+    #list {
+      overflow: auto;
+      padding-right: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.05);
+      cursor: pointer;
+    }
+    .item:hover { background: rgba(255,255,255,0.09); }
+    .itemName { font-size: 13px; line-height: 1.2; }
+    .tag {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      white-space: nowrap;
+      opacity: 0.9;
+    }
+
+    /* Stage (zoom/pan) */
+    #stage {
+      position: absolute;
+      inset: 0;
+      transform-origin: 0 0;
+      will-change: transform;
+      cursor: grab;
+    }
+    #stage.dragging { cursor: grabbing; }
+
+    #mapImg {
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+      display: block;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    #pins { position: absolute; inset: 0; }
+
+    /* POI pin (28px as requested) */
+    .pin {
+      position: absolute;
+      width: 28px;
+      height: 28px;
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+      pointer-events: auto;
+      filter: drop-shadow(0 6px 12px rgba(0,0,0,0.35));
+    }
+
+    /* Toast */
+    #toast {
+      position: absolute;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      padding: 10px 14px;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.65);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #fff;
+      font-size: 14px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease;
+      z-index: 10;
+      max-width: min(900px, calc(100vw - 24px));
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #toast.show { opacity: 1; }
+
+    /* Modal */
+    #modalBackdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+    }
+    #modal {
+      width: min(560px, calc(100vw - 28px));
+      border-radius: 16px;
+      background: rgba(15,15,15,0.92);
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.55);
+      color: #fff;
+      padding: 14px;
+      backdrop-filter: blur(10px);
+    }
+    #modalHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 4px 4px 10px 4px;
+    }
+    #modalTitle { font-weight: 650; font-size: 14px; opacity: 0.95; }
+    #modalClose {
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+    }
+    #modalBody { display: grid; gap: 10px; padding: 4px; }
+    #nameInput {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.06);
+      color: #fff;
+      outline: none;
+      font-size: 14px;
+    }
+    #notesInput {
+      width: 100%;
+      min-height: 90px;
+      resize: vertical;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.06);
+      color: #fff;
+      outline: none;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .typeGrid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+    }
+    .typeBtn {
+      border-radius: 14px;
+      padding: 10px 8px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.05);
+      display: grid;
+      gap: 6px;
+      justify-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .typeBtn:hover { background: rgba(255,255,255,0.09); }
+    .typeBtn.selected {
+      border-color: rgba(255,255,255,0.28);
+      background: rgba(255,255,255,0.12);
+    }
+    .typeIcon {
+      width: 28px;
+      height: 28px;
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+      filter: drop-shadow(0 6px 12px rgba(0,0,0,0.35));
+    }
+    .typeLabel {
+      font-size: 11px;
+      opacity: 0.9;
+      text-align: center;
+      line-height: 1.1;
+    }
+
+    #modalFooter {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 10px 4px 4px 4px;
+    }
+
+    .btnDanger {
+      border-color: rgba(255,80,80,0.28);
+      background: rgba(255,80,80,0.10);
+    }
+    .btnDanger:hover { background: rgba(255,80,80,0.16); }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+
+    <div id="ui">
+      <button id="enterGmBtn">Enter GM</button>
+      <button id="exitGmBtn" style="display:none;">Exit GM</button>
+      <button id="resetViewBtn" title="Сбросить зум и позицию">Reset view</button>
+      <button id="resetBtn" title="Очистить все точки (только в GM)">Reset places</button>
+    </div>
+
+    <div id="panel">
+      <div id="panelHeader">
+        <div id="panelTitle">Известные места</div>
+        <div id="countBadge"></div>
+      </div>
+
+      <div id="controls">
+        <input id="search" type="text" placeholder="Поиск..." />
+        <div id="filters">
+          <select id="typeFilter" title="Фильтр по типу">
+            <option value="all">Все типы</option>
+            <option value="settlement">Поселение</option>
+            <option value="ruins">Руины/Храм</option>
+            <option value="danger">Опасность</option>
+            <option value="resources">Ресурсы</option>
+            <option value="unknown">Неизвестно</option>
+          </select>
+          <select id="sortFilter" title="Сортировка">
+            <option value="type_name">Тип → Имя</option>
+            <option value="name">Имя</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="list"></div>
+    </div>
+
+    <div id="stage">
+      <img id="mapImg" src="./assets/map.png" alt="map" />
+      <div id="pins"></div>
+    </div>
+
+    <!-- Modal -->
+    <div id="modalBackdrop">
+      <div id="modal" role="dialog" aria-modal="true">
+        <div id="modalHeader">
+          <div id="modalTitle">Новое место</div>
+          <button id="modalClose" title="Закрыть">×</button>
+        </div>
+
+        <div id="modalBody">
+          <input id="nameInput" type="text" placeholder="Название места" />
+          <textarea id="notesInput" placeholder="Заметки (описание, слухи, опасности, лор)"></textarea>
+          <div class="typeGrid" id="typeGrid"></div>
+        </div>
+
+        <div id="modalFooter">
+          <button id="deleteBtn" class="btnDanger" style="display:none;">Удалить</button>
+          <button id="cancelBtn">Отмена</button>
+          <button id="saveBtn">Сохранить</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast"></div>
+  </div>
+
+  <script>
+    // ===============================
+    // CONFIG
+    // ===============================
+    const GM_PASSWORD = "1272";
+    const MIN_SCALE = 0.5;
+    const MAX_SCALE = 3.0;
+    const ZOOM_SENSITIVITY = 0.0012;
+
+    // Icon file names (as we agreed)
+    // assets/poi_settlement.png
+    // assets/poi_ruins.png
+    // assets/poi_danger.png
+    // assets/poi_resources.png
+    // assets/poi_unknown.png
+    const ICONS = {
+      settlement: "./assets/poi_settlement.png",
+      ruins: "./assets/poi_ruins.png",
+      danger: "./assets/poi_danger.png",
+      resources: "./assets/poi_resources.png",
+      unknown: "./assets/poi_unknown.png",
+    };
+
+    const TYPE_LABEL = {
+      settlement: "Поселение",
+      ruins: "Руины/Храм",
+      danger: "Опасность",
+      resources: "Ресурсы",
+      unknown: "Неизвестно",
+    };
+
+    const TYPE_ORDER = ["settlement", "ruins", "danger", "resources", "unknown"];
+
+    // ===============================
+    // DOM
+    // ===============================
+    const wrap = document.getElementById("wrap");
+    const stage = document.getElementById("stage");
+    const mapImg = document.getElementById("mapImg");
+    const pinsLayer = document.getElementById("pins");
+
+    const enterGmBtn = document.getElementById("enterGmBtn");
+    const exitGmBtn = document.getElementById("exitGmBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const resetViewBtn = document.getElementById("resetViewBtn");
+    const toast = document.getElementById("toast");
+
+    const searchInput = document.getElementById("search");
+    const typeFilter = document.getElementById("typeFilter");
+    const sortFilter = document.getElementById("sortFilter");
+    const listEl = document.getElementById("list");
+    const countBadge = document.getElementById("countBadge");
+
+    // Modal
+    const modalBackdrop = document.getElementById("modalBackdrop");
+    const modalTitle = document.getElementById("modalTitle");
+    const modalClose = document.getElementById("modalClose");
+    const nameInput = document.getElementById("nameInput");
+    const notesInput = document.getElementById("notesInput");
+    const typeGrid = document.getElementById("typeGrid");
+    const deleteBtn = document.getElementById("deleteBtn");
+    const cancelBtn = document.getElementById("cancelBtn");
+    const saveBtn = document.getElementById("saveBtn");
+
+    // ===============================
+    // STORAGE
+    // ===============================
+    const STORAGE_POINTS = "poi_points_v3";
+    const STORAGE_GM = "poi_gm_enabled_v3";
+
+    let points = loadPoints();
+    let isGm = loadIsGm();
+
+    // Stage transform
+    let scale = 1, tx = 0, ty = 0;
+
+    // Drag
+    let dragging = false;
+    let dragStartX = 0, dragStartY = 0, dragStartTx = 0, dragStartTy = 0;
+
+    // Modal state
+    let modalMode = "create"; // "create" | "edit"
+    let modalSelectedType = "unknown";
+    let modalTargetPointId = null;
+    let modalPendingNorm = null; // {nx, ny} for create
+
+    // ===============================
+    // HELPERS
+    // ===============================
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+    function showToast(text) {
+      toast.textContent = text;
+      toast.classList.add("show");
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => toast.classList.remove("show"), 1400);
+    }
+
+    function loadPoints() {
+      try {
+        const raw = localStorage.getItem(STORAGE_POINTS);
+        return raw ? JSON.parse(raw) : [];
+      } catch {
+        return [];
+      }
+    }
+    function savePoints() {
+      localStorage.setItem(STORAGE_POINTS, JSON.stringify(points));
+    }
+    function loadIsGm() {
+      return localStorage.getItem(STORAGE_GM) === "1";
+    }
+    function saveIsGm() {
+      localStorage.setItem(STORAGE_GM, isGm ? "1" : "0");
+    }
+    function uid() {
+      return Math.random().toString(16).slice(2) + Date.now().toString(16);
+    }
+
+    function updateGmButtons() {
+      if (isGm) {
+        enterGmBtn.style.display = "none";
+        exitGmBtn.style.display = "inline-block";
+        resetBtn.disabled = false;
+      } else {
+        enterGmBtn.style.display = "inline-block";
+        exitGmBtn.style.display = "none";
+        resetBtn.disabled = true;
+      }
+    }
+
+    function applyStageTransform() {
+      stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    }
+
+    function resetView() {
+      scale = 1; tx = 0; ty = 0;
+      applyStageTransform();
+    }
+
+    // Screen -> Stage coords
+    function screenToStage(clientX, clientY) {
+      const r = wrap.getBoundingClientRect();
+      const x = clientX - r.left;
+      const y = clientY - r.top;
+      return { sx: (x - tx) / scale, sy: (y - ty) / scale };
+    }
+
+    function getDrawnImageMetricsInStage() {
+      const rectW = wrap.clientWidth;
+      const rectH = wrap.clientHeight;
+
+      const naturalW = mapImg.naturalWidth;
+      const naturalH = mapImg.naturalHeight;
+      if (!naturalW || !naturalH) return null;
+
+      const imgAspect = naturalW / naturalH;
+      const rectAspect = rectW / rectH;
+
+      let drawnW, drawnH, offsetX, offsetY;
+
+      if (rectAspect > imgAspect) {
+        drawnH = rectH;
+        drawnW = drawnH * imgAspect;
+        offsetX = (rectW - drawnW) / 2;
+        offsetY = 0;
+      } else {
+        drawnW = rectW;
+        drawnH = drawnW / imgAspect;
+        offsetX = 0;
+        offsetY = (rectH - drawnH) / 2;
+      }
+
+      return { drawnW, drawnH, offsetX, offsetY };
+    }
+
+    function getNormalizedPointFromClick(e) {
+      const m = getDrawnImageMetricsInStage();
+      if (!m) return null;
+
+      const p = screenToStage(e.clientX, e.clientY);
+      const xOnImage = p.sx - m.offsetX;
+      const yOnImage = p.sy - m.offsetY;
+
+      if (xOnImage < 0 || yOnImage < 0 || xOnImage > m.drawnW || yOnImage > m.drawnH) return null;
+
+      return { nx: xOnImage / m.drawnW, ny: yOnImage / m.drawnH };
+    }
+
+    function centerOnPoint(point) {
+      const m = getDrawnImageMetricsInStage();
+      if (!m) return;
+
+      const targetX = m.offsetX + point.nx * m.drawnW;
+      const targetY = m.offsetY + point.ny * m.drawnH;
+
+      const vw = wrap.clientWidth;
+      const vh = wrap.clientHeight;
+
+      tx = (vw / 2) - targetX * scale;
+      ty = (vh / 2) - targetY * scale;
+      applyStageTransform();
+    }
+
+    // ===============================
+    // MODAL
+    // ===============================
+    function buildTypeGrid() {
+      typeGrid.innerHTML = "";
+      for (const t of TYPE_ORDER) {
+        const btn = document.createElement("div");
+        btn.className = "typeBtn";
+        btn.dataset.type = t;
+
+        const icon = document.createElement("div");
+        icon.className = "typeIcon";
+        icon.style.backgroundImage = `url("${ICONS[t]}")`;
+
+        const label = document.createElement("div");
+        label.className = "typeLabel";
+        label.textContent = TYPE_LABEL[t];
+
+        btn.appendChild(icon);
+        btn.appendChild(label);
+
+        btn.addEventListener("click", () => {
+          modalSelectedType = t;
+          syncTypeSelection();
+        });
+
+        typeGrid.appendChild(btn);
+      }
+    }
+
+    function syncTypeSelection() {
+      const nodes = typeGrid.querySelectorAll(".typeBtn");
+      nodes.forEach(n => n.classList.toggle("selected", n.dataset.type === modalSelectedType));
+    }
+
+    function openCreateModal(norm) {
+      modalMode = "create";
+      modalPendingNorm = norm;
+      modalTargetPointId = null;
+
+      modalTitle.textContent = "Новое место";
+      nameInput.value = "Неизвестное место";
+      notesInput.value = "";
+      modalSelectedType = "unknown";
+      deleteBtn.style.display = "none";
+      saveBtn.textContent = "Добавить";
+
+      buildTypeGrid();
+      syncTypeSelection();
+
+      modalBackdrop.style.display = "flex";
+      setTimeout(() => nameInput.focus(), 0);
+    }
+
+    function openEditModal(point) {
+      modalMode = "edit";
+      modalPendingNorm = null;
+      modalTargetPointId = point.id;
+
+      modalTitle.textContent = "Редактировать место";
+      nameInput.value = point.name || "";
+      notesInput.value = point.notes || "";
+      modalSelectedType = point.type || "unknown";
+      deleteBtn.style.display = "inline-block";
+      saveBtn.textContent = "Сохранить";
+
+      buildTypeGrid();
+      syncTypeSelection();
+
+      modalBackdrop.style.display = "flex";
+      setTimeout(() => nameInput.focus(), 0);
+    }
+
+    function closeModal() {
+      modalBackdrop.style.display = "none";
+      modalMode = "create";
+      modalSelectedType = "unknown";
+      modalTargetPointId = null;
+      modalPendingNorm = null;
+      nameInput.value = "";
+      notesInput.value = "";
+    }
+
+    // ===============================
+    // RENDER
+    // ===============================
+    function renderPins() {
+      pinsLayer.innerHTML = "";
+      const m = getDrawnImageMetricsInStage();
+      if (!m) return;
+
+      for (const p of points) {
+        const el = document.createElement("div");
+        el.className = "pin";
+        el.style.left = (m.offsetX + p.nx * m.drawnW) + "px";
+        el.style.top  = (m.offsetY + p.ny * m.drawnH) + "px";
+        el.style.backgroundImage = `url("${ICONS[p.type] || ICONS.unknown}")`;
+
+        const label = TYPE_LABEL[p.type] || TYPE_LABEL.unknown;
+        el.title = `${p.name} — ${label}${p.notes ? " | " + p.notes : ""}`;
+
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          centerOnPoint(p);
+          if (isGm) {
+            openEditModal(p);
+          } else {
+            const msg = p.notes ? `${p.name}: ${p.notes}` : `${p.name} — ${label}`;
+            showToast(msg);
+          }
+        });
+
+        pinsLayer.appendChild(el);
+      }
+    }
+
+    function getFilteredPoints() {
+      const q = (searchInput.value || "").trim().toLowerCase();
+      const t = typeFilter.value;
+      const sortMode = sortFilter.value;
+
+      let arr = points.slice();
+      if (q) arr = arr.filter(p => (p.name || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q));
+      if (t !== "all") arr = arr.filter(p => p.type === t);
+
+      if (sortMode === "name") {
+        arr.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ru"));
+      } else {
+        arr.sort((a, b) => {
+          const ta = TYPE_ORDER.indexOf(a.type);
+          const tb = TYPE_ORDER.indexOf(b.type);
+          if (ta !== tb) return ta - tb;
+          return (a.name || "").localeCompare(b.name || "", "ru");
+        });
+      }
+      return arr;
+    }
+
+    function renderList() {
+      const filtered = getFilteredPoints();
+      listEl.innerHTML = "";
+      countBadge.textContent = `${filtered.length} / ${points.length}`;
+
+      for (const p of filtered) {
+        const row = document.createElement("div");
+        row.className = "item";
+
+        const name = document.createElement("div");
+        name.className = "itemName";
+        name.textContent = p.name || "Без названия";
+
+        const tag = document.createElement("div");
+        tag.className = "tag";
+        tag.textContent = TYPE_LABEL[p.type] || TYPE_LABEL.unknown;
+
+        row.appendChild(name);
+        row.appendChild(tag);
+
+        row.addEventListener("click", () => {
+          centerOnPoint(p);
+          if (isGm) openEditModal(p);
+          else {
+            const label = TYPE_LABEL[p.type] || TYPE_LABEL.unknown;
+            const msg = p.notes ? `${p.name}: ${p.notes}` : `${p.name} — ${label}`;
+            showToast(msg);
+          }
+        });
+
+        listEl.appendChild(row);
+      }
+    }
+
+    function renderAll() {
+      renderPins();
+      renderList();
+      updateGmButtons();
+    }
+
+    // ===============================
+    // EVENTS
+    // ===============================
+    // Zoom to cursor (ignore wheel over UI/panel/modal)
+    wrap.addEventListener("wheel", (e) => {
+      if (e.target.closest("#panel") || e.target.closest("#ui") || e.target.closest("#modal")) return;
+      e.preventDefault();
+
+      const before = screenToStage(e.clientX, e.clientY);
+      const factor = Math.exp(-e.deltaY * ZOOM_SENSITIVITY);
+      const newScale = clamp(scale * factor, MIN_SCALE, MAX_SCALE);
+      if (newScale === scale) return;
+
+      scale = newScale;
+
+      const r = wrap.getBoundingClientRect();
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+
+      tx = x - before.sx * scale;
+      ty = y - before.sy * scale;
+      applyStageTransform();
+    }, { passive: false });
+
+    // Pan with drag
+    wrap.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest("#panel") || e.target.closest("#ui") || e.target.closest("#modal")) return;
+      if (e.target.classList.contains("pin")) return;
+
+      dragging = true;
+      stage.classList.add("dragging");
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      dragStartTx = tx;
+      dragStartTy = ty;
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      tx = dragStartTx + (e.clientX - dragStartX);
+      ty = dragStartTy + (e.clientY - dragStartY);
+      applyStageTransform();
+    });
+
+    window.addEventListener("mouseup", () => {
+      dragging = false;
+      stage.classList.remove("dragging");
+    });
+
+    // Add point on DOUBLE CLICK (GM only)
+    wrap.addEventListener("dblclick", (e) => {
+      if (!isGm) return;
+      if (e.target.closest("#panel") || e.target.closest("#ui") || e.target.closest("#modal")) return;
+      if (e.target.classList.contains("pin")) return;
+
+      const norm = getNormalizedPointFromClick(e);
+      if (!norm) return;
+
+      openCreateModal(norm);
+    });
+
+    // GM enter/exit
+    enterGmBtn.addEventListener("click", () => {
+      const input = prompt("Введите пароль GM:");
+      if (input === null) return;
+
+      if (input === GM_PASSWORD) {
+        isGm = true;
+        saveIsGm();
+        updateGmButtons();
+        showToast("GM mode enabled.");
+      } else {
+        showToast("Неверный пароль.");
+      }
+    });
+
+    exitGmBtn.addEventListener("click", () => {
+      isGm = false;
+      saveIsGm();
+      updateGmButtons();
+      showToast("GM mode disabled.");
+      closeModal();
+    });
+
+    resetBtn.addEventListener("click", () => {
+      if (!isGm) return;
+      const ok = confirm("Удалить ВСЕ точки? Это нельзя отменить.");
+      if (!ok) return;
+      points = [];
+      savePoints();
+      renderAll();
+      showToast("Точки очищены.");
+    });
+
+    resetViewBtn.addEventListener("click", () => {
+      resetView();
+      showToast("View reset.");
+    });
+
+    // Panel controls
+    searchInput.addEventListener("input", renderList);
+    typeFilter.addEventListener("change", renderList);
+    sortFilter.addEventListener("change", renderList);
+
+    // Modal controls
+    modalClose.addEventListener("click", closeModal);
+    cancelBtn.addEventListener("click", closeModal);
+
+    modalBackdrop.addEventListener("click", (e) => {
+      if (e.target === modalBackdrop) closeModal();
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (modalBackdrop.style.display !== "flex") return;
+      if (e.key === "Escape") closeModal();
+      if (e.key === "Enter") saveBtn.click();
+    });
+
+    deleteBtn.addEventListener("click", () => {
+      if (!isGm) return;
+      if (!modalTargetPointId) return;
+
+      const ok = confirm("Удалить эту точку?");
+      if (!ok) return;
+
+      points = points.filter(p => p.id !== modalTargetPointId);
+      savePoints();
+      closeModal();
+      renderAll();
+      showToast("Точка удалена.");
+    });
+
+    saveBtn.addEventListener("click", () => {
+      if (!isGm) return;
+
+      const name = (nameInput.value || "").trim() || "Неизвестное место";
+      const notes = (notesInput.value || "").trim();
+      const type = modalSelectedType || "unknown";
+
+      if (modalMode === "create") {
+        if (!modalPendingNorm) return;
+
+        points.push({
+          id: uid(),
+          name,
+          notes,
+          type,
+          nx: modalPendingNorm.nx,
+          ny: modalPendingNorm.ny
+        });
+
+        savePoints();
+        closeModal();
+        renderAll();
+        showToast("Точка добавлена.");
+        return;
+      }
+
+      if (modalMode === "edit") {
+        const p = points.find(x => x.id === modalTargetPointId);
+        if (!p) return;
+
+        p.name = name;
+        p.notes = notes;
+        p.type = type;
+
+        savePoints();
+        closeModal();
+        renderAll();
+        showToast("Точка сохранена.");
+      }
+    });
+
+    // ===============================
+    // MODAL TYPE GRID INIT
+    // ===============================
+    function buildTypeGrid() {
+      typeGrid.innerHTML = "";
+      for (const t of TYPE_ORDER) {
+        const btn = document.createElement("div");
+        btn.className = "typeBtn";
+        btn.dataset.type = t;
+
+        const icon = document.createElement("div");
+        icon.className = "typeIcon";
+        icon.style.backgroundImage = `url("${ICONS[t]}")`;
+
+        const label = document.createElement("div");
+        label.className = "typeLabel";
+        label.textContent = TYPE_LABEL[t];
+
+        btn.appendChild(icon);
+        btn.appendChild(label);
+
+        btn.addEventListener("click", () => {
+          modalSelectedType = t;
+          syncTypeSelection();
+        });
+
+        typeGrid.appendChild(btn);
+      }
+    }
+
+    function syncTypeSelection() {
+      const nodes = typeGrid.querySelectorAll(".typeBtn");
+      nodes.forEach(n => n.classList.toggle("selected", n.dataset.type === modalSelectedType));
+    }
+
+    function openCreateModal(norm) {
+      modalMode = "create";
+      modalPendingNorm = norm;
+      modalTargetPointId = null;
+
+      modalTitle.textContent = "Новое место";
+      nameInput.value = "Неизвестное место";
+      notesInput.value = "";
+      modalSelectedType = "unknown";
+      deleteBtn.style.display = "none";
+      saveBtn.textContent = "Добавить";
+
+      buildTypeGrid();
+      syncTypeSelection();
+
+      modalBackdrop.style.display = "flex";
+      setTimeout(() => nameInput.focus(), 0);
+    }
+
+    function openEditModal(point) {
+      modalMode = "edit";
+      modalPendingNorm = null;
+      modalTargetPointId = point.id;
+
+      modalTitle.textContent = "Редактировать место";
+      nameInput.value = point.name || "";
+      notesInput.value = point.notes || "";
+      modalSelectedType = point.type || "unknown";
+      deleteBtn.style.display = "inline-block";
+      saveBtn.textContent = "Сохранить";
+
+      buildTypeGrid();
+      syncTypeSelection();
+
+      modalBackdrop.style.display = "flex";
+      setTimeout(() => nameInput.focus(), 0);
+    }
+
+    function closeModal() {
+      modalBackdrop.style.display = "none";
+      modalMode = "create";
+      modalSelectedType = "unknown";
+      modalTargetPointId = null;
+      modalPendingNorm = null;
+      nameInput.value = "";
+      notesInput.value = "";
+    }
+
+    // Re-render when image loads or viewport changes
+    mapImg.addEventListener("load", () => { renderAll(); applyStageTransform(); });
+    window.addEventListener("resize", renderAll);
+
+    // Init
+    updateGmButtons();
+    renderAll();
+    applyStageTransform();
+  </script>
+</body>
+</html>
+```
