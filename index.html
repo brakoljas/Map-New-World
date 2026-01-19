@@ -336,7 +336,7 @@
       <button id="gridBtn" title="Показать/скрыть сетку">Grid</button>
       <button id="measureBtn" title="Измерить расстояние">Measure</button>
       <button id="resetViewBtn" title="Сбросить зум и позицию">Reset view</button>
-      <button id="resetBtn" title="Очистить все точки (только в GM)">Reset places</button>
+      <button id="resetBtn" title="Удалить все точки (только в GM)">Reset places</button>
     </div>
 
     <div id="panel">
@@ -428,7 +428,16 @@
 
   <script>
     // ===============================
-    // CONFIG
+    // CLOUD CONFIG (Supabase)
+    // ===============================
+    const CLOUD_ENABLED = true;
+    const MAP_ID = "main"; // если сделаешь другую карту — поменяй на другое имя
+
+    const SUPABASE_URL = "https://ezvbphobkkuuzejnatss.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_MPQ6BF4WXk7QG38S_52HnA_qt1FRGYI";
+
+    // ===============================
+    // APP CONFIG
     // ===============================
     const GM_PASSWORD = "1272";
     const MIN_SCALE = 0.5;
@@ -466,6 +475,71 @@
     };
 
     const TYPE_ORDER = ["settlement", "outpost", "ruins", "danger", "resources", "unknown"];
+
+    // ===============================
+    // SUPABASE REST HELPERS
+    // ===============================
+    function sbHeaders() {
+      return {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+        "Content-Type": "application/json",
+      };
+    }
+
+    async function cloudLoadPoints() {
+      if (!CLOUD_ENABLED) return [];
+      const url =
+        `${SUPABASE_URL}/rest/v1/markers?` +
+        `map_id=eq.${encodeURIComponent(MAP_ID)}` +
+        `&select=id,map_id,name,notes,type,c,r,updated_at` +
+        `&order=updated_at.asc`;
+
+      const res = await fetch(url, { headers: sbHeaders() });
+      if (!res.ok) throw new Error("cloudLoadPoints failed: " + res.status);
+      return await res.json();
+    }
+
+    async function cloudUpsertPoint(p) {
+      if (!CLOUD_ENABLED) return;
+
+      const body = [{
+        id: p.id,
+        map_id: MAP_ID,
+        name: p.name,
+        notes: p.notes || "",
+        type: p.type,
+        c: p.c,
+        r: p.r,
+        updated_at: new Date().toISOString()
+      }];
+
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/markers?on_conflict=id`, {
+        method: "POST",
+        headers: { ...sbHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) throw new Error("cloudUpsertPoint failed: " + res.status);
+    }
+
+    async function cloudDeletePoint(id) {
+      if (!CLOUD_ENABLED) return;
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/markers?id=eq.${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: sbHeaders(),
+      });
+      if (!res.ok) throw new Error("cloudDeletePoint failed: " + res.status);
+    }
+
+    async function cloudDeleteAllForMap() {
+      if (!CLOUD_ENABLED) return;
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/markers?map_id=eq.${encodeURIComponent(MAP_ID)}`, {
+        method: "DELETE",
+        headers: sbHeaders(),
+      });
+      if (!res.ok) throw new Error("cloudDeleteAllForMap failed: " + res.status);
+    }
 
     // ===============================
     // DOM
@@ -516,13 +590,24 @@
     const viewNotesEmpty = document.getElementById("viewNotesEmpty");
 
     // ===============================
-    // STORAGE
+    // LOCAL STORAGE (only for GM toggle + optional fallback)
     // ===============================
-    const STORAGE_POINTS = "poi_points_v7";
-    const STORAGE_GM = "poi_gm_enabled_v7";
+    const STORAGE_GM = "poi_gm_enabled_v8";
+    const STORAGE_FALLBACK_POINTS = "poi_points_fallback_v8"; // optional backup
 
-    let points = loadPoints();
     let isGm = loadIsGm();
+
+    function loadIsGm() {
+      return localStorage.getItem(STORAGE_GM) === "1";
+    }
+    function saveIsGm() {
+      localStorage.setItem(STORAGE_GM, isGm ? "1" : "0");
+    }
+
+    // ===============================
+    // APP STATE
+    // ===============================
+    let points = [];
 
     // Stage transform
     let scale = 1, tx = 0, ty = 0;
@@ -564,36 +649,15 @@
     function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
     function clampInt(v, min, max) { return Math.max(min, Math.min(max, v | 0)); }
 
-    function loadPoints() {
-      try {
-        const raw = localStorage.getItem(STORAGE_POINTS);
-        const arr = raw ? JSON.parse(raw) : [];
-        // migrate old nx/ny -> c/r if needed
-        for (const p of arr) {
-          if ((p.c === undefined || p.r === undefined) && typeof p.nx === "number" && typeof p.ny === "number") {
-            const cell = normToNearestCell(p.nx, p.ny);
-            p.c = cell.c;
-            p.r = cell.r;
-            delete p.nx;
-            delete p.ny;
-          }
-        }
-        return arr;
-      } catch {
-        return [];
-      }
-    }
-    function savePoints() {
-      localStorage.setItem(STORAGE_POINTS, JSON.stringify(points));
-    }
-    function loadIsGm() {
-      return localStorage.getItem(STORAGE_GM) === "1";
-    }
-    function saveIsGm() {
-      localStorage.setItem(STORAGE_GM, isGm ? "1" : "0");
-    }
-    function uid() {
-      return Math.random().toString(16).slice(2) + Date.now().toString(16);
+    function uuidv4() {
+      // RFC4122 v4
+      if (crypto && crypto.randomUUID) return crypto.randomUUID();
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
+      return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
     }
 
     function updateGmButtons() {
@@ -1055,6 +1119,12 @@
       drawGrid();
     }
 
+    function saveFallbackToLocal() {
+      try {
+        localStorage.setItem(STORAGE_FALLBACK_POINTS, JSON.stringify(points));
+      } catch {}
+    }
+
     // ===============================
     // EVENTS
     // ===============================
@@ -1128,7 +1198,7 @@
     });
 
     // Mouse up
-    window.addEventListener("mouseup", () => {
+    window.addEventListener("mouseup", async () => {
       // End pin drag
       if (pinDrag.active && isGm) {
         const point = points.find(x => x.id === pinDrag.pointId);
@@ -1144,7 +1214,8 @@
         if (!point) return;
 
         if (wasMoved) {
-          savePoints();
+          try { await cloudUpsertPoint(point); } catch (e) { console.error(e); }
+          saveFallbackToLocal();
           renderAll();
         } else {
           openGmEditModal(point);
@@ -1211,13 +1282,15 @@
       closeGmModal();
     });
 
-    // Reset points
-    resetBtn.addEventListener("click", () => {
+    // Reset points (cloud)
+    resetBtn.addEventListener("click", async () => {
       if (!isGm) return;
       const ok = confirm("Удалить ВСЕ точки? Это нельзя отменить.");
       if (!ok) return;
+
+      try { await cloudDeleteAllForMap(); } catch (e) { console.error(e); }
       points = [];
-      savePoints();
+      saveFallbackToLocal();
       renderAll();
     });
 
@@ -1254,20 +1327,24 @@
       if (e.target === gmBackdrop) closeGmModal();
     });
 
-    deleteBtn.addEventListener("click", () => {
+    deleteBtn.addEventListener("click", async () => {
       if (!isGm) return;
       if (!gmTargetPointId) return;
 
       const ok = confirm("Удалить эту точку?");
       if (!ok) return;
 
-      points = points.filter(p => p.id !== gmTargetPointId);
-      savePoints();
+      const id = gmTargetPointId;
+
+      points = points.filter(p => p.id !== id);
       closeGmModal();
       renderAll();
+
+      try { await cloudDeletePoint(id); } catch (e) { console.error(e); }
+      saveFallbackToLocal();
     });
 
-    gmSave.addEventListener("click", () => {
+    gmSave.addEventListener("click", async () => {
       if (!isGm) return;
 
       const name = (nameInput.value || "").trim() || "Неизвестное место";
@@ -1277,18 +1354,23 @@
       if (gmMode === "create") {
         if (!gmPendingCell) return;
 
-        points.push({
-          id: uid(),
+        const p = {
+          id: uuidv4(),
+          map_id: MAP_ID,
           name,
           notes,
           type,
           c: gmPendingCell.c,
-          r: gmPendingCell.r
-        });
+          r: gmPendingCell.r,
+          updated_at: new Date().toISOString()
+        };
 
-        savePoints();
+        points.push(p);
         closeGmModal();
         renderAll();
+
+        try { await cloudUpsertPoint(p); } catch (e) { console.error(e); }
+        saveFallbackToLocal();
         return;
       }
 
@@ -1299,10 +1381,13 @@
         p.name = name;
         p.notes = notes;
         p.type = type;
+        p.updated_at = new Date().toISOString();
 
-        savePoints();
         closeGmModal();
         renderAll();
+
+        try { await cloudUpsertPoint(p); } catch (e) { console.error(e); }
+        saveFallbackToLocal();
       }
     });
 
@@ -1336,6 +1421,46 @@
     });
 
     // ===============================
+    // CLOUD SYNC LOOP (players)
+    // ===============================
+    let lastCloudStamp = 0;
+
+    function computeStamp(arr) {
+      // max updated_at
+      let max = 0;
+      for (const p of arr) {
+        const t = Date.parse(p.updated_at || "") || 0;
+        if (t > max) max = t;
+      }
+      return max;
+    }
+
+    async function refreshFromCloud() {
+      try {
+        const fresh = await cloudLoadPoints();
+        const stamp = computeStamp(fresh);
+
+        // Avoid re-render if nothing changed
+        if (stamp === lastCloudStamp && fresh.length === points.length) return;
+
+        points = fresh.map(p => ({
+          id: p.id,
+          name: p.name || "",
+          notes: p.notes || "",
+          type: p.type || "unknown",
+          c: typeof p.c === "number" ? p.c : 0,
+          r: typeof p.r === "number" ? p.r : 0,
+          updated_at: p.updated_at || null
+        }));
+        lastCloudStamp = stamp;
+        renderAll();
+        saveFallbackToLocal();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // ===============================
     // INIT
     // ===============================
     buildTypeGrid();
@@ -1350,15 +1475,38 @@
     window.addEventListener("resize", () => {
       renderAll();
       drawGrid();
-      if (measureEnabled && measureStart) {
-        // keep svg aligned after resize (line stays in svg content; it will be recalculated on next click)
-        // no action needed
-      }
     });
 
     updateGmButtons();
     gridBtn.style.background = "rgba(255,255,255,0.18)";
     measureBtn.style.background = "rgba(255,255,255,0.10)";
+
+    // Initial load from cloud
+    (async () => {
+      // Try cloud first
+      await refreshFromCloud();
+
+      // Fallback: if cloud empty, try local backup so you at least see something
+      if (points.length === 0) {
+        try {
+          const raw = localStorage.getItem(STORAGE_FALLBACK_POINTS);
+          const arr = raw ? JSON.parse(raw) : [];
+          if (Array.isArray(arr) && arr.length) {
+            points = arr;
+            renderAll();
+          }
+        } catch {}
+      }
+
+      // Players auto refresh
+      setInterval(async () => {
+        if (!CLOUD_ENABLED) return;
+        if (isGm) return; // GM не перетираем авто-рефрешем
+        if (gmBackdrop.style.display === "flex") return;
+        await refreshFromCloud();
+      }, 5000);
+    })();
+
     renderAll();
     applyStageTransform();
     drawGrid();
