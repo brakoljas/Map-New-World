@@ -824,11 +824,19 @@
     // MEASURE (ruler)
     // ===============================
     function cellDistance(a, b) {
-      // "как хекс": диагональ = прямая
-      const dc = Math.abs(b.c - a.c);
-      const dr = Math.abs(b.r - a.r);
-      return Math.max(dc, dr);
-    }
+  const dx = Math.abs(b.c - a.c);
+  const dy = Math.abs(b.r - a.r);
+
+  const diagonals = Math.min(dx, dy);
+  const straights = Math.abs(dx - dy);
+
+  const pairs = Math.floor(diagonals / 2);
+  const remainder = diagonals % 2;
+
+  // каждая пара диагоналей = 3 клетки (1 + 2)
+  return pairs * 3 + remainder * 1 + straights;
+}
+
 
     function clearMeasure() {
       measureStart = null;
@@ -1513,3 +1521,4 @@
   </script>
 </body>
 </html>
+
